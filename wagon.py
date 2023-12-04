@@ -201,7 +201,7 @@ def wheel(package,
             requirement_files,
             pip_path=pip_path)
         process = _run(wheel_command)
-        if not process.returncode == 0:
+        if process.returncode != 0:
             raise WagonError('Failed to download wheels for: {0}'.format(
                 requirement_files))
 
@@ -211,20 +211,15 @@ def wheel(package,
         package=package,
         pip_path=pip_path)
     process = _run(wheel_command)
-    if not process.returncode == 0:
+    if process.returncode != 0:
         raise WagonError(
             'Failed to download wheels for: {0}'.format(package))
 
-    wheels = _get_downloaded_wheels(wheels_path)
-
-    return wheels
+    return _get_downloaded_wheels(wheels_path)
 
 
 def _pip(venv=None):
-    pip_module = 'pip'
-    if sys.version_info[:2] == (2, 6):
-        # in 2.6, packages aren't executable
-        pip_module = 'pip.__main__'
+    pip_module = 'pip.__main__' if sys.version_info[:2] == (2, 6) else 'pip'
     return [_get_python_path(venv), '-m', pip_module]
 
 
@@ -284,7 +279,7 @@ def install_package(package,
         logger.info('Installing within current virtualenv')
 
     result = _run(pip_command)
-    if not result.returncode == 0:
+    if result.returncode != 0:
         raise WagonError(
             'Could not install package: {0} (`{1}` returned `{2}`)'.format(
                 package, pip_command, result.aggr_stderr))
@@ -319,7 +314,7 @@ def _download_file(url, destination):
 
     response = _open_url(url)
 
-    if not response.code == 200:
+    if response.code != 200:
         raise WagonError(
             "Failed to download file. Request to {0} "
             "failed with HTTP Error: {1}".format(url, response.code))
@@ -480,9 +475,9 @@ def _set_python_versions(python_versions=None):
 def _get_name_and_version_from_setup(source_path):
 
     def get_arg(arg_type, setuppy_path):
-        return _run([
-            sys.executable, setuppy_path, '--' + arg_type
-        ]).aggr_stdout.strip()
+        return _run(
+            [sys.executable, setuppy_path, f'--{arg_type}']
+        ).aggr_stdout.strip()
 
     logger.debug('setup.py file found. Retrieving name and version...')
     setuppy_path = os.path.join(source_path, 'setup.py')
@@ -493,13 +488,12 @@ def _get_name_and_version_from_setup(source_path):
 
 def _handle_output_file(filepath, force):
     if os.path.isfile(filepath):
-        if force:
-            logger.info('Removing previous archive...')
-            os.remove(filepath)
-        else:
+        if not force:
             raise WagonError(
                 'Destination archive already exists: {0}. You can use '
                 'the -f flag to overwrite.'.format(filepath))
+        logger.info('Removing previous archive...')
+        os.remove(filepath)
 
 
 def _generate_metadata_file(workdir,
@@ -532,12 +526,11 @@ def _generate_metadata_file(workdir,
     }
     if IS_LINUX and platform != ALL_PLATFORMS_TAG:
         distribution, version, release = _get_os_properties()
-        metadata.update(
-            {'build_server_os_properties': {
-                'distribution': distribution.lower(),
-                'distribution_version': version.lower(),
-                'distribution_release': release.lower()
-            }})
+        metadata['build_server_os_properties'] = {
+            'distribution': distribution.lower(),
+            'distribution_version': version.lower(),
+            'distribution_release': release.lower(),
+        }
 
     formatted_metadata = json.dumps(metadata, indent=4, sort_keys=True)
     if is_verbose():
@@ -575,8 +568,7 @@ def _set_archive_name(package_name,
     if build_tag:
         archive_name_tags.insert(2, build_tag)
 
-    archive_name = '{0}.wgn'.format('-'.join(archive_name_tags))
-    return archive_name
+    return '{0}.wgn'.format('-'.join(archive_name_tags))
 
 
 def get_source_name_and_version(source):
@@ -639,8 +631,7 @@ def get_source(source):
                 'provided file is a valid zip or tar.gz '
                 'archive'.format(source))
 
-        source = os.path.join(
-            destination, [d for d in next(os.walk(destination))[1]][0])
+        source = os.path.join(destination, list(next(os.walk(destination))[1])[0])
         return source
 
     logger.debug('Retrieving source...')
@@ -896,14 +887,12 @@ def validate(source):
     metadata = _get_metadata(processed_source)
 
     wheels_path = os.path.join(processed_source, DEFAULT_WHEELS_PATH)
-    validation_errors = []
-
     logger.debug('Verifying that all required files exist...')
-    for wheel in metadata['wheels']:
-        if not os.path.isfile(os.path.join(wheels_path, wheel)):
-            validation_errors.append(
-                '{0} is missing from the archive'.format(wheel))
-
+    validation_errors = [
+        '{0} is missing from the archive'.format(wheel)
+        for wheel in metadata['wheels']
+        if not os.path.isfile(os.path.join(wheels_path, wheel))
+    ]
     logger.debug('Testing package installation...')
     tmpenv = _make_virtualenv()
     try:
